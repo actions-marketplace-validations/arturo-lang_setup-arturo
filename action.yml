@@ -44,6 +44,9 @@ inputs:
     release:
         description: 'Make an official release (compile mode only)'
         default: 'false'
+    pgo:
+        description: 'Build with profile-guided optimization: slower build, faster binary (compile mode only, needs an Arturo version that supports --pgo)'
+        default: 'false'
  
 runs:
     using: "composite"
@@ -124,6 +127,11 @@ runs:
             echo "src=${{ inputs.src }}" >> $GITHUB_ENV
             echo "metadata=${{ inputs.metadata }}" >> $GITHUB_ENV
             echo "release=${{ inputs.release }}" >> $GITHUB_ENV
+            if [ "${{ inputs.pgo }}" = "true" ] && [ "$detected_build_mode" != "web" ]; then
+                echo "pgo=true" >> $GITHUB_ENV
+            else
+                echo "pgo=false" >> $GITHUB_ENV
+            fi
           shell: bash
 
         - name: Determine artifact name
@@ -175,6 +183,7 @@ runs:
             echo "Source Ref:       ${{ env.src != '' && env.src || '(latest)' }}"
             echo "Metadata:         ${{ env.metadata != '' && env.metadata || '(none)' }}"
             echo "Release:          ${{ env.release == 'true' && 'yes' || 'no' }}"
+            echo "PGO:              ${{ env.pgo == 'true' && 'yes' || 'no' }}"
             echo "Artifact Name:    ${{ env.artifact_name }}"
             echo "======================================"
           shell: bash
@@ -319,7 +328,7 @@ runs:
                   fi
                   ${{ env.metadata != '' && format('echo "{0}" > version/metadata', env.metadata) || '' }}
                   export PATH="/usr/local/nim/bin/:$PATH"
-                  ./build.nims --install --mode ${{ env.build_mode }} --log${{ env.release == 'true' && ' --release' || '' }}
+                  ./build.nims --install --mode ${{ env.build_mode }} --log${{ env.release == 'true' && ' --release' || '' }}${{ env.pgo == 'true' && ' --pgo' || '' }}
                   cd ..
                   cp -r $HOME/.arturo/bin/* /usr/local/bin/
                   rm -rf arturo-src
@@ -350,6 +359,7 @@ runs:
           with:
             update: true
             cache: true
+            suppress-deprecation-warnings: msystem-mingw64
             install: >-
               git
               base-devel
@@ -427,15 +437,21 @@ runs:
         - name: Install Nim (macOS)
           if: inputs.do == 'compile' && env.os == 'macos'
           run: |
-            brew update
-            brew install nim
+            nim_arch=$([ "${{ env.arch }}" = "arm64" ] && echo "arm64" || echo "x64")
+
+            mkdir nim
+            curl -fL https://nim-lang.org/download/nim-2.4.0-macosx_${nim_arch}.tar.xz -o nim.tar.xz
+            tar -xJf nim.tar.xz -C nim
+            rm nim.tar.xz
+
+            echo "$PWD/nim/nim-2.4.0/bin" >> $GITHUB_PATH
           shell: bash
 
         - name: Install Nim (Windows)
           if: inputs.do == 'compile' && env.os == 'windows'
           run: |
             mkdir nim
-            curl -L https://nim-lang.org/download/nim-2.2.12_x64.zip -o nim.zip
+            curl -L https://nim-lang.org/download/nim-2.4.0_x64.zip -o nim.zip
             7z x nim.zip -onim
             rm nim.zip
           shell: msys2 {0}
@@ -448,7 +464,7 @@ runs:
           if: inputs.do == 'compile' && (env.os == 'linux' || env.os == 'macos' || env.os == 'web')
           run: |
             cd arturo-src
-            ./build.nims --install --mode ${{ env.build_mode }} --arch ${{ env.arch }} --log${{ env.release == 'true' && ' --release' || '' }}
+            ./build.nims --install --mode ${{ env.build_mode }} --arch ${{ env.arch }} --log${{ env.release == 'true' && ' --release' || '' }}${{ env.pgo == 'true' && ' --pgo' || '' }}
             
             echo "$HOME/.arturo/bin" >> $GITHUB_PATH
             echo "arturoDistPath=$HOME/.arturo/bin" >> $GITHUB_ENV
@@ -460,10 +476,10 @@ runs:
         - name: Build Arturo (Windows)
           if: inputs.do == 'compile' && env.os == 'windows'
           run: |
-            export PATH="${{ github.workspace }}/nim/nim-2.2.12/bin":$PATH
+            export PATH="${{ github.workspace }}/nim/nim-2.4.0/bin":$PATH
 
             cd arturo-src
-            ./build.nims --install --mode ${{ env.mode }} --log${{ env.release == 'true' && ' --release' || '' }}
+            ./build.nims --install --mode ${{ env.mode }} --log${{ env.release == 'true' && ' --release' || '' }}${{ env.pgo == 'true' && ' --pgo' || '' }}
             cd ..
             
             mkdir bin
